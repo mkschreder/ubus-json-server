@@ -12,7 +12,7 @@
  */
 #pragma once
 
-#include <libutype/avl.h>
+#include <libubox/avl.h>
 #include <stdint.h>
 
 struct ubus_id {

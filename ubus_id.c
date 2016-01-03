@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <libutype/avl-cmp.h>
+#include <libubox/avl-cmp.h>
 
 //#include "ubusmsg.h"
 #include <libubus.h>

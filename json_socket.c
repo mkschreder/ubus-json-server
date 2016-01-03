@@ -297,7 +297,7 @@ void _ubus_client_send(struct ubus_client *self){
 }
 
 void json_socket_poll(struct json_socket *self, int timeout){
-	int count = avl_size(&self->clients) + 1; 
+	int count = self->clients.count + 1; 
 	struct pollfd *pfd = alloca(sizeof(struct pollfd) * count); 
 	memset(pfd, 0, sizeof(struct pollfd) * count); 
 	struct ubus_client **clients = alloca(sizeof(void*)*100); 
