@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Martin Schröder <mkschreder.uk@gmail.com>
+ * Copyright (C) 2015,2016 Martin Schröder <mkschreder.uk@gmail.com>
  * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License version 2.1

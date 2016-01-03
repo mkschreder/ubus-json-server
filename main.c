@@ -1,3 +1,4 @@
+
 #include "json_socket.h"
 #include <libubox/blobmsg.h>
 #include <libubox/blobmsg_json.h>
@@ -28,7 +29,7 @@ void json_request_delete(struct json_request **self){
 }
 
 static void _on_call_result_data(struct ubus_request *req, int type, struct blob_attr *msg){
-	printf("got response!\n"); 
+	//printf("got response!\n"); 
 	struct json_request *jr = (struct json_request*)req->priv; 
 
 	// send the response
@@ -36,7 +37,7 @@ static void _on_call_result_data(struct ubus_request *req, int type, struct blob
 }
 
 void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uint32_t serial, struct blob_attr *msg){
-	printf("got message from peer %08x\n", peer); 
+	//printf("got message from peer %08x\n", peer); 
 	struct ubus_context *ctx = (struct ubus_context*)json_socket_get_userdata(self); 	
 	enum {
 		RPC_JSONRPC,
@@ -112,7 +113,7 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 		return; 
 	}
 
-	printf("calling %s %s %s\n", sid, object, method); 
+	printf("call %s %s %s\n", sid, object, method); 
 
 	uint32_t id = 0; 
 	if(ubus_lookup_id(ctx, object, &id) < 0) {
@@ -137,7 +138,7 @@ int main(int argc, char **argv){
 
 	signal(SIGPIPE, SIG_IGN); 
 
-	if(json_socket_listen(sock, "/tmp/ubus-json.sock") < 0){
+	if(json_socket_listen(sock, "/var/run/ubus-json.sock") < 0){
 		fprintf(stderr, "could not listen on socket!\n");
 		return -1; 
 	}
