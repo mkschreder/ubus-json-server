@@ -86,6 +86,7 @@ static void ubus_client_delete(struct ubus_client **self){
 	shutdown((*self)->fd, SHUT_RDWR); 
 	close((*self)->fd); 
 	blob_buf_free(&(*self)->buf); 
+	free((*self)->recv_buffer); 
 	free(*self); 
 	*self = NULL;
 }
@@ -95,7 +96,7 @@ struct ubus_frame *ubus_frame_new(int type, uint16_t seq, struct blob_attr *msg)
 	struct ubus_frame *self = calloc(1, sizeof(struct ubus_frame)); 
 	char *json = blobmsg_format_json(msg, true); 
 	self->data_size = strlen(json) + 1; 
-	self->data = calloc(1, self->data_size); 
+	self->data = calloc(1, self->data_size + 1); 
 	sprintf(self->data, "%s\n", json); 
 	free(json); 
 	INIT_LIST_HEAD(&self->list); 
@@ -186,7 +187,7 @@ int json_socket_listen(struct json_socket *self, const char *_address){
 	} else {
 		_split_address_port(address, addrlen, &port); 
 	}
-	printf("trying to listen on %s %s\n", address, port); 
+	//printf("trying to listen on %s %s\n", address, port); 
 	self->listen_fd = usock(flags, address, port);
 	if (self->listen_fd < 0) {
 		perror("usock");
@@ -225,6 +226,7 @@ int json_socket_connect(struct json_socket *self, const char *_address, uint32_t
 bool _ubus_client_recv(struct ubus_client *self, struct json_socket *socket){
 	int rc = recv(self->fd, self->recv_buffer + self->recv_count, self->recv_size - self->recv_count, 0); 
 	if(rc == 0){
+		//printf("eof reached!\n"); 
 		return false; 
 	}
 
@@ -250,11 +252,12 @@ bool _ubus_client_recv(struct ubus_client *self, struct json_socket *socket){
 				blob_buf_init(&self->buf, 0); 
 				blobmsg_buf_init(&self->buf); 
 				if(!blobmsg_add_json_from_string(&self->buf, self->recv_buffer)){
-					//printf("got invalid json!\n"); 
+					printf("got invalid json! %s\n", self->recv_buffer); 
 					return false; 
 				}
+				printf("got message: %s from %08x\n", self->recv_buffer, self->id.id); 
 				if(socket->on_message){
-					socket->on_message(socket, self->id.id, 0, 0, self->buf.head); 
+					socket->on_message(socket, self->id.id, 0, 1, self->buf.head); 
 				}
 				int pos = (ch - self->recv_buffer + 1); 
 				int rest_size = self->recv_count - pos; 
@@ -327,17 +330,17 @@ void json_socket_poll(struct json_socket *self, int timeout){
 		for(int c = 1; c < count; c++){
 			if(pfd[c].revents != 0){
 				if(pfd[c].revents & POLLHUP || pfd[c].revents & POLLRDHUP){
-					//printf("ERROR: peer hung up!\n"); 
+					printf("json_socket: peer hung up (%08x)!\n", clients[c]->id.id); 
 					_ubus_client_recv(clients[c], self); 
 					avl_delete(&self->clients, &clients[c]->id.avl); 
 					ubus_client_delete(&clients[c]); 
 					continue; 
 				} else if(pfd[c].revents & POLLERR){
-					printf("ERROR: socket error!\n"); 
+					printf("ERROR: json_socket error!\n"); 
 				} else if(pfd[c].revents & POLLIN) {
 					// receive as much data as we can
 					if(!_ubus_client_recv(clients[c], self)){
-						printf("client %08x disconnected!\n", clients[c]->id.id); 
+						printf("json_socket: client %08x disconnected!\n", clients[c]->id.id); 
 						avl_delete(&self->clients, &clients[c]->id.avl); 
 						ubus_client_delete(&clients[c]); 
 					}
@@ -349,10 +352,14 @@ void json_socket_poll(struct json_socket *self, int timeout){
 
 int json_socket_send(struct json_socket *self, int32_t peer, int type, uint16_t serial, struct blob_attr *msg){
 	struct ubus_id *id;  
+	char *json = blobmsg_format_json(blobmsg_data(msg), false); 
+	printf("sending %s\n", json); 
+	free(json); 
+
 	if(peer == UBUS_PEER_BROADCAST){
 		avl_for_each_element(&self->clients, id, avl){
 			struct ubus_client *client = (struct ubus_client*)container_of(id, struct ubus_client, id);  
-			struct ubus_frame *req = ubus_frame_new(type, serial, msg);
+			struct ubus_frame *req = ubus_frame_new(type, serial, blobmsg_data(msg));
 			list_add(&req->list, &client->tx_queue); 
 			// try to send as much as we can right away
 			_ubus_client_send(client); 
@@ -362,7 +369,7 @@ int json_socket_send(struct json_socket *self, int32_t peer, int type, uint16_t 
 		struct ubus_id *id = ubus_id_find(&self->clients, peer); 
 		if(!id) return -1; 
 		struct ubus_client *client = (struct ubus_client*)container_of(id, struct ubus_client, id);  
-		struct ubus_frame *req = ubus_frame_new(type, serial, msg);
+		struct ubus_frame *req = ubus_frame_new(type, serial, blobmsg_data(msg));
 		list_add(&req->list, &client->tx_queue); 
 		_ubus_client_send(client); 
 	}
