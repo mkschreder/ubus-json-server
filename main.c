@@ -117,7 +117,11 @@ static void _on_call_result_data(struct ubus_request *req, int type, struct blob
 	blobmsg_add_u32(&buf, "id", jr->serial); 
 	void *arr = blobmsg_open_array(&buf, "result"); 
 	void *data = blobmsg_open_table(&buf, NULL); 
-	blobmsg_add_blob(&buf, blobmsg_data(msg)); 
+	struct blob_attr *cur; int rem; 
+	//void *foo = blobmsg_open_table(&buf, NULL); 
+	blobmsg_for_each_attr(cur, msg, rem){ 
+		blobmsg_add_blob(&buf, cur); 
+	}
 	blobmsg_close_table(&buf, data); 
 	blobmsg_close_array(&buf, arr); 	
 	blobmsg_close_table(&buf, obj); 
@@ -239,10 +243,16 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 		free(json); 
 
 		struct json_request *jr = json_request_new(self, peer, serial);  
-		
-		// epic ugliness... I know. 
+
 		blob_buf_init(&buf, 0); 
-		blobmsg_add_blob(&buf, blobmsg_data(tb2[2])); 
+		struct blob_attr *cur; int rem; 
+		//void *foo = blobmsg_open_table(&buf, NULL); 
+		blobmsg_for_each_attr(cur, tb2[2], rem){ 
+			blobmsg_add_blob(&buf, cur); 
+			//blobmsg_add_blob(&buf, blobmsg_data(tb2[2])); 
+
+		}
+		//blobmsg_close_table(&buf, foo); 
 
 		int rc = ubus_invoke_async(ctx, id, method, buf.head, jr->req);
 		if(rc){
