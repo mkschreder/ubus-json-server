@@ -251,13 +251,14 @@ bool _ubus_client_recv(struct ubus_client *self, struct json_socket *socket){
 				*ch = 0; 
 				blob_buf_init(&self->buf, 0); 
 				blobmsg_buf_init(&self->buf); 
-				if(!blobmsg_add_json_from_string(&self->buf, self->recv_buffer)){
+				if(blobmsg_add_json_from_string(&self->buf, self->recv_buffer)){
+					printf("got message: %s from %08x\n", self->recv_buffer, self->id.id); 
+					if(socket->on_message){
+						socket->on_message(socket, self->id.id, 0, 1, self->buf.head); 
+					}
+				} else {
 					printf("got invalid json! %s\n", self->recv_buffer); 
-					return false; 
-				}
-				printf("got message: %s from %08x\n", self->recv_buffer, self->id.id); 
-				if(socket->on_message){
-					socket->on_message(socket, self->id.id, 0, 1, self->buf.head); 
+					// TODO: disconnect client
 				}
 				int pos = (ch - self->recv_buffer + 1); 
 				int rest_size = self->recv_count - pos; 
