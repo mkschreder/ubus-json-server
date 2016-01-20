@@ -68,12 +68,8 @@ static void receive_list_result(struct ubus_context *ctx, struct ubus_object_dat
 	blobmsg_close_table(buf, arr); 
 }
 
-static void _on_call_completed(struct ubus_request *req, int ret){
-	printf("request complete: %d\n", ret); 
-	struct json_request *jr = (struct json_request*)req->priv; 
-	jr->status = ret; 
-
-	const char *errors[] = {
+static void _server_send_error(struct json_socket *sock, uint32_t peer, int code, uint32_t serial, const char *msg){
+	static const char *errors[] = {
 		"UBUS_STATUS_OK",                     
 		"UBUS_STATUS_INVALID_COMMAND",        
 		"UBUS_STATUS_INVALID_ARGUMENT",       
@@ -87,22 +83,30 @@ static void _on_call_completed(struct ubus_request *req, int ret){
 		"UBUS_STATUS_CONNECTION_FAILED",
 	}; 
 
-	if(ret){
-		blob_buf_init(&buf, 0); 
-		blobmsg_buf_init(&buf); 
-		void *obj = blobmsg_open_table(&buf, NULL); 
-		blobmsg_add_string(&buf, "jsonrpc", "2.0"); 
-		blobmsg_add_u32(&buf, "id", jr->serial); 
-		void *arr = blobmsg_open_array(&buf, "result"); 
-		void *data = blobmsg_open_table(&buf, NULL); 
-		blobmsg_add_u32(&buf, "code", ret);
-		if(ret >= 0 && ret < __UBUS_STATUS_LAST)
-			blobmsg_add_string(&buf, "error", errors[ret]); 
-		blobmsg_close_table(&buf, data); 
-		blobmsg_close_array(&buf, arr); 	
-		blobmsg_close_table(&buf, obj); 
+	blob_buf_init(&buf, 0); 
+	blobmsg_buf_init(&buf); 
+	void *obj = blobmsg_open_table(&buf, NULL); 
+	blobmsg_add_string(&buf, "jsonrpc", "2.0"); 
+	blobmsg_add_u32(&buf, "id", serial); 
+	void *arr = blobmsg_open_array(&buf, "result"); 
+	void *data = blobmsg_open_table(&buf, NULL); 
+	blobmsg_add_u32(&buf, "code", code);
+	if(code >= 0 && code < __UBUS_STATUS_LAST)
+		blobmsg_add_string(&buf, "error", errors[code]); 
+	blobmsg_add_string(&buf, "message", msg); 	
+	blobmsg_close_table(&buf, data); 
+	blobmsg_close_array(&buf, arr); 	
+	blobmsg_close_table(&buf, obj); 
 
-		json_socket_send(jr->sock, jr->peer, UBUS_MSG_ERROR, jr->serial, buf.head); 
+	json_socket_send(sock, peer, UBUS_MSG_ERROR, serial, buf.head); 
+}
+
+static void _on_call_completed(struct ubus_request *req, int ret){
+	printf("request complete: %d\n", ret); 
+	struct json_request *jr = (struct json_request*)req->priv; 
+	jr->status = ret; 
+	if(ret != 0){
+		_server_send_error(jr->sock, jr->peer, ret, jr->serial, "Method call failed!"); 
 		jr->response_sent = true; 
 	}
 }
@@ -133,6 +137,7 @@ static void _on_call_result_data(struct ubus_request *req, int type, struct blob
 void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uint32_t serial, struct blob_attr *msg){
 	//printf("got message from peer %08x\n", peer); 
 	struct ubus_context *ctx = (struct ubus_context*)json_socket_get_userdata(self); 	
+
 	enum {
 		RPC_JSONRPC,
 		RPC_ID,
@@ -162,19 +167,19 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 	//printf("got json message\n"); 
 	cur = tb[RPC_JSONRPC];
 	if (!cur || strcmp(blobmsg_data(cur), "2.0") != 0){
-		printf("invalid rpc version!\n"); 
+		_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "invalid rpc version!\n"); 
 		return;
 	}
 
-	cur = tb[RPC_METHOD];
-	if (!cur){
-		printf("method unspecified!\n"); 
+	if (!tb[RPC_METHOD]){
+		_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "method unspecified!\n"); 
 		return;
 	}
+	const char *rpc_method = blobmsg_data(tb[RPC_METHOD]); 
 
 	cur = tb[RPC_PARAMS];
 	if (!cur){
-		printf("json_socket: params unspecified in request!\n"); 
+		_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "params unspecified!\n"); 
 		return;
 	}
 
@@ -184,45 +189,7 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 	blobmsg_parse_array(data_policy, ARRAY_SIZE(data_policy), tb2,
 			    blobmsg_data(tb[RPC_PARAMS]), blobmsg_len(tb[RPC_PARAMS]));
 
-	/*if (!tb2[0]){
-		printf("sid unspecified\n"); 
-		return; 
-	}
-	const char *sid = blobmsg_data(tb2[0]);
-
-*/
-	if (!tb2[0]){
-		printf("object unspecified!\n"); 
-		return; 
-	}
-
-	const char *object = blobmsg_data(tb2[0]);
-
-	if (!tb2[1]){
-		printf("method unspecified!\n"); 
-		return; 
-	}
-	
-	const char *method = blobmsg_data(tb2[1]);
-			
-	if(!tb2[2]){
-		printf("params unspecified!\n"); 
-		return; 
-	}
-/*
-	// use for profiling memory
-	if(strcmp(object, "crash_me") == 0){
-		int *foo = 0; 
-		*foo = 1; 
-	}
-*/
-	uint32_t id = 0; 
-	if(ubus_lookup_id(ctx, object, &id) < 0) {
-		printf("object not found!\n");
-		return;
-	}
-
-	if(strcmp(object, "/ubus/peer") == 0 && strcmp(method, "ubus.peer.list") == 0){
+	if(strcmp(rpc_method, "list") == 0){
 		printf("proxy: list request from %08x\n", peer); 
 		blob_buf_init(&buf, 0); 
 		blobmsg_buf_init(&buf); 
@@ -231,13 +198,41 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 		blobmsg_add_u32(&buf, "id", serial); 
 		void *arr = blobmsg_open_array(&buf, "result"); 
 		void *data = blobmsg_open_table(&buf, NULL); 
-		ubus_lookup(ctx, "*", receive_list_result, &buf);
+		char *search = "*"; 
+		if(tb2[0]) search = blobmsg_data(tb2[0]); 
+		ubus_lookup(ctx, search, receive_list_result, &buf);
 		blobmsg_close_table(&buf, data); 
 		blobmsg_close_array(&buf, arr); 	
 		blobmsg_close_table(&buf, obj); 
 		json_socket_send(self, peer, UBUS_MSG_METHOD_RETURN, serial, buf.head); 
 		return; 
-	} else {
+	} else if(strcmp(rpc_method, "call") == 0){
+		if (!tb2[0]){
+			_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "object unspecified in params!\n"); 
+			return; 
+		}
+
+		const char *object = blobmsg_data(tb2[0]);
+
+		if (!tb2[1]){
+			_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "method unspecified in params!\n"); 
+			return; 
+		}
+		
+		const char *method = blobmsg_data(tb2[1]);
+				
+		if(!tb2[2]){
+			_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "params unspecified in params!\n"); 
+			return; 
+		}
+
+		uint32_t id = 0; 
+		if(ubus_lookup_id(ctx, object, &id) < 0 || !id) {
+			_server_send_error(self, peer, UBUS_STATUS_NOT_FOUND, serial, "object not found!\n");
+			return;
+		}
+
+	
 		char *json = blobmsg_format_json(tb2[2], false); 
 		printf("proxy: call from %08x, object=%s, method=%s params=%s\n", peer, object, method, json);  
 		free(json); 
@@ -279,6 +274,8 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 			json_socket_send(jr->sock, jr->peer, UBUS_MSG_METHOD_RETURN, jr->serial, buf.head); 
 		}
 		printf("request done!\n"); 
+	} else {
+		_server_send_error(self, peer, UBUS_STATUS_NOT_SUPPORTED, serial, "Method not supported!"); 
 	}
 }
 
@@ -290,6 +287,11 @@ static void _handle_ctrl_c(int sig){
 int main(int argc, char **argv){
 	struct json_socket *sock = json_socket_new(); 
 	struct ubus_context *ctx = ubus_connect(NULL); 
+
+	if(!ctx){
+		fprintf(stderr, "Could not connect to ubus!\n"); 
+		return -1; 
+	}
 
 	blob_buf_init(&buf, 0); 
 
