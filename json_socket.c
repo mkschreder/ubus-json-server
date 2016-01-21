@@ -238,7 +238,9 @@ bool _ubus_client_recv(struct ubus_client *self, struct json_socket *socket){
 		if(self->recv_count == self->recv_size){
 			//TODO: handle properly or resize the buffer 
 			printf("too large message!\n"); 
-			close(self->fd); 
+			self->recv_count = 0;
+			return false; 
+			//close(self->fd); 
 		}
 
 		// process as many messages as we can and save any extra data in the recv buffer 

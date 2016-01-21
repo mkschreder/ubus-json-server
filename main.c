@@ -189,24 +189,7 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 	blobmsg_parse_array(data_policy, ARRAY_SIZE(data_policy), tb2,
 			    blobmsg_data(tb[RPC_PARAMS]), blobmsg_len(tb[RPC_PARAMS]));
 
-	if(strcmp(rpc_method, "list") == 0){
-		printf("proxy: list request from %08x\n", peer); 
-		blob_buf_init(&buf, 0); 
-		blobmsg_buf_init(&buf); 
-		void *obj = blobmsg_open_table(&buf, NULL); 
-		blobmsg_add_string(&buf, "jsonrpc", "2.0"); 
-		blobmsg_add_u32(&buf, "id", serial); 
-		void *arr = blobmsg_open_array(&buf, "result"); 
-		void *data = blobmsg_open_table(&buf, NULL); 
-		char *search = "*"; 
-		if(tb2[0]) search = blobmsg_data(tb2[0]); 
-		ubus_lookup(ctx, search, receive_list_result, &buf);
-		blobmsg_close_table(&buf, data); 
-		blobmsg_close_array(&buf, arr); 	
-		blobmsg_close_table(&buf, obj); 
-		json_socket_send(self, peer, UBUS_MSG_METHOD_RETURN, serial, buf.head); 
-		return; 
-	} else if(strcmp(rpc_method, "call") == 0){
+	if(strcmp(rpc_method, "call") == 0){
 		if (!tb2[0]){
 			_server_send_error(self, peer, UBUS_STATUS_INVALID_ARGUMENT, serial, "object unspecified in params!\n"); 
 			return; 
@@ -232,48 +215,65 @@ void _on_json_message(struct json_socket *self, uint32_t peer, uint8_t type, uin
 			return;
 		}
 
-	
-		char *json = blobmsg_format_json(tb2[2], false); 
-		printf("proxy: call from %08x, object=%s, method=%s params=%s\n", peer, object, method, json);  
-		free(json); 
-
-		struct json_request *jr = json_request_new(self, peer, serial);  
-
-		blob_buf_init(&buf, 0); 
-		struct blob_attr *cur; int rem; 
-		//void *foo = blobmsg_open_table(&buf, NULL); 
-		blobmsg_for_each_attr(cur, tb2[2], rem){ 
-			blobmsg_add_blob(&buf, cur); 
-			//blobmsg_add_blob(&buf, blobmsg_data(tb2[2])); 
-
-		}
-		//blobmsg_close_table(&buf, foo); 
-
-		int rc = ubus_invoke_async(ctx, id, method, buf.head, jr->req);
-		if(rc){
-			printf("could not make call! %d\n", rc); 
-		}
-		// NOTE: this is incredibly retarded! Holy fuck! Why is invoke sync INITIALIZING the request? What idiot wrote original ubus libraries???
-		jr->req->priv = jr; 
-		jr->req->data_cb = _on_call_result_data; 
-		jr->req->complete_cb = _on_call_completed; 
-		ubus_complete_request(ctx, jr->req, 5000); 
-		// pretty ugly but just makes sure we at least send an empty response when ubus returns ok but no data. 
-		if(!jr->response_sent){
+		if(strcmp(object, "ubus") == 0 && strcmp(method, "list") == 0){
+			printf("proxy: list request from %08x\n", peer); 
 			blob_buf_init(&buf, 0); 
 			blobmsg_buf_init(&buf); 
 			void *obj = blobmsg_open_table(&buf, NULL); 
 			blobmsg_add_string(&buf, "jsonrpc", "2.0"); 
-			blobmsg_add_u32(&buf, "id", jr->serial); 
+			blobmsg_add_u32(&buf, "id", serial); 
 			void *arr = blobmsg_open_array(&buf, "result"); 
 			void *data = blobmsg_open_table(&buf, NULL); 
+			char *search = "*"; 
+			if(tb2[0]) search = blobmsg_data(tb2[0]); 
+			ubus_lookup(ctx, search, receive_list_result, &buf);
 			blobmsg_close_table(&buf, data); 
 			blobmsg_close_array(&buf, arr); 	
 			blobmsg_close_table(&buf, obj); 
-			// send the response
-			json_socket_send(jr->sock, jr->peer, UBUS_MSG_METHOD_RETURN, jr->serial, buf.head); 
+			json_socket_send(self, peer, UBUS_MSG_METHOD_RETURN, serial, buf.head); 
+		} else {
+			char *json = blobmsg_format_json(tb2[2], false); 
+			printf("proxy: call from %08x, object=%s, method=%s params=%s\n", peer, object, method, json);  
+			free(json); 
+
+			struct json_request *jr = json_request_new(self, peer, serial);  
+
+			blob_buf_init(&buf, 0); 
+			struct blob_attr *cur; int rem; 
+			//void *foo = blobmsg_open_table(&buf, NULL); 
+			blobmsg_for_each_attr(cur, tb2[2], rem){ 
+				blobmsg_add_blob(&buf, cur); 
+				//blobmsg_add_blob(&buf, blobmsg_data(tb2[2])); 
+
+			}
+			//blobmsg_close_table(&buf, foo); 
+
+			int rc = ubus_invoke_async(ctx, id, method, buf.head, jr->req);
+			if(rc){
+				printf("could not make call! %d\n", rc); 
+			}
+			// NOTE: this is incredibly retarded! Holy fuck! Why is invoke sync INITIALIZING the request? What idiot wrote original ubus libraries???
+			jr->req->priv = jr; 
+			jr->req->data_cb = _on_call_result_data; 
+			jr->req->complete_cb = _on_call_completed; 
+			ubus_complete_request(ctx, jr->req, 5000); 
+			// pretty ugly but just makes sure we at least send an empty response when ubus returns ok but no data. 
+			if(!jr->response_sent){
+				blob_buf_init(&buf, 0); 
+				blobmsg_buf_init(&buf); 
+				void *obj = blobmsg_open_table(&buf, NULL); 
+				blobmsg_add_string(&buf, "jsonrpc", "2.0"); 
+				blobmsg_add_u32(&buf, "id", jr->serial); 
+				void *arr = blobmsg_open_array(&buf, "result"); 
+				void *data = blobmsg_open_table(&buf, NULL); 
+				blobmsg_close_table(&buf, data); 
+				blobmsg_close_array(&buf, arr); 	
+				blobmsg_close_table(&buf, obj); 
+				// send the response
+				json_socket_send(jr->sock, jr->peer, UBUS_MSG_METHOD_RETURN, jr->serial, buf.head); 
+			}
+			printf("request done!\n"); 
 		}
-		printf("request done!\n"); 
 	} else {
 		_server_send_error(self, peer, UBUS_STATUS_NOT_SUPPORTED, serial, "Method not supported!"); 
 	}
