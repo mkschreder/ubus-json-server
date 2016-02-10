@@ -356,7 +356,8 @@ void json_socket_poll(struct json_socket *self, int timeout){
 int json_socket_send(struct json_socket *self, int32_t peer, int type, uint16_t serial, struct blob_attr *msg){
 	struct ubus_id *id;  
 	char *json = blobmsg_format_json(blobmsg_data(msg), false); 
-	printf("sending %s\n", json); 
+	printf("sending response..\n"); 
+	//printf("sending %s\n", json); 
 	free(json); 
 
 	if(peer == UBUS_PEER_BROADCAST){
